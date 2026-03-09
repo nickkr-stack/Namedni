@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f4f4f5;
+}
+
+.app {
+  max-width: 900px;
+  margin: auto;
+  padding: 20px;
+}
+
+h1 {
+  margin: 0 0 20px 0;
+  font-size: 32px;
+}
+
+.levels {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 25px;
+}
+
+.level-item {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid #ccc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+
+.level-item.active {
+  background: black;
+  color: white;
+  border-color: black;
+}
+
+.status {
+  margin-bottom: 20px;
+}
+
+.hidden {
+  display: none;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.fact-card {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.fact-text {
+  font-size: 20px;
+  line-height: 1.4;
+}
+
+.answer-btn {
+  margin-top: 20px;
+  padding: 10px;
+  border: none;
+  background: black;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.fact-meta {
+  margin-top: 15px;
+}
+
+.fact-title {
+  font-weight: bold;
+}
+
+.fact-year {
+  color: #666;
+}
+
+.restart-btn {
+  margin-top: 30px;
+  padding: 10px 16px;
+  border: none;
+  background: #ddd;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#nextBtn {
+  margin-top: 25px;
+  padding: 12px 20px;
+  font-size: 16px;
+}
+
+@media (max-width: 700px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <h1>Что было раньше?</h1>
+  </header>
+
+  <div id="levels" class="levels"></div>
+
+  <div id="status" class="status">
+    Загрузка данных...
+  </div>
+
+  <main id="gameArea" class="game-area hidden">
+
+    <section id="cards" class="cards">
+
+      <article class="fact-card">
+        <div class="fact-text">...</div>
+
+        <button class="answer-btn">Это раньше</button>
+
+        <div class="fact-meta hidden">
+          <div class="fact-title"></div>
+          <div class="fact-year"></div>
+        </div>
+      </article>
+
+      <article class="fact-card">
+        <div class="fact-text">...</div>
+
+        <button class="answer-btn">Это раньше</button>
+
+        <div class="fact-meta hidden">
+          <div class="fact-title"></div>
+          <div class="fact-year"></div>
+        </div>
+      </article>
+
+    </section>
+
+    <button id="nextBtn" class="primary-btn hidden">
+      Дальше
+    </button>
+
+    <button id="restartBtn" class="restart-btn">
+      Начать заново
+    </button>
+
+  </main>
+
+</div>
+
+<script>
+
+const MAX_LEVEL = 8;
+
+const LEVEL_LIMITS = {
+  1: 40,
+  2: 35,
+  3: 30,
+  4: 25,
+  5: 20,
+  6: 15,
+  7: 10,
+  8: 5
+};
+
+const elements = {
+  levels: document.getElementById("levels"),
+  status: document.getElementById("status"),
+  gameArea: document.getElementById("gameArea"),
+  restartBtn: document.getElementById("restartBtn"),
+  nextBtn: document.getElementById("nextBtn"),
+  cards: document.querySelectorAll(".fact-card")
+};
+
+const gameState = {
+  loaded: false,
+  currentLevel: 1,
+  usedPhenomena: new Set(),
+  phenomenaMap: new Map(),
+  phenomenaList: [],
+  currentRound: null,
+  isRoundResolved: false
+};
+
+function setStatus(text) {
+  elements.status.textContent = text;
+}
+
+function renderLevels() {
+  elements.levels.innerHTML = "";
+
+  for (let i = 1; i <= MAX_LEVEL; i++) {
+    const div = document.createElement("div");
+    div.className = "level-item";
+    div.textContent = i;
+
+    if (i === gameState.currentLevel) {
+      div.classList.add("active");
+    }
+
+    elements.levels.appendChild(div);
+  }
+}
+
+function randomItem(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function normalizeItem(item) {
+  return {
+    sentence: String(item.sentence || "").trim(),
+    year: Number(item.year),
+    title: String(item.title || "").trim()
+  };
+}
+
+function buildPhenomena(sentences) {
+  const map = new Map();
+
+  for (const item of sentences) {
+    if (!map.has(item.title)) {
+      map.set(item.title, {
+        title: item.title,
+        year: item.year,
+        sentences: []
+      });
+    }
+
+    map.get(item.title).sentences.push(item.sentence);
+  }
+
+  return map;
+}
+
+async function loadData() {
+  const response = await fetch("sentences.json");
+
+  if (!response.ok) {
+    throw new Error("Не удалось загрузить sentences.json");
+  }
+
+  const raw = await response.json();
+
+  const normalized = raw
+    .map(normalizeItem)
+    .filter(i => i.sentence && i.title && Number.isFinite(i.year));
+
+  gameState.phenomenaMap = buildPhenomena(normalized);
+  gameState.phenomenaList = Array.from(gameState.phenomenaMap.values());
+  gameState.loaded = true;
+}
+
+function resetCard(card) {
+  const text = card.querySelector(".fact-text");
+  const btn = card.querySelector(".answer-btn");
+  const meta = card.querySelector(".fact-meta");
+  const title = card.querySelector(".fact-title");
+  const year = card.querySelector(".fact-year");
+
+  text.textContent = "";
+  btn.style.display = "block";
+  btn.disabled = false;
+  meta.classList.add("hidden");
+  title.textContent = "";
+  year.textContent = "";
+  card.style.background = "white";
+}
+
+function resetGame() {
+  gameState.currentLevel = 1;
+  gameState.usedPhenomena = new Set();
+  gameState.currentRound = null;
+  gameState.isRoundResolved = false;
+
+  renderLevels();
+  elements.nextBtn.classList.add("hidden");
+  elements.cards.forEach(resetCard);
+
+  nextRound();
+}
+
+function pickPhenomenaPair() {
+  const level = gameState.currentLevel;
+  const limit = LEVEL_LIMITS[level];
+
+  while (true) {
+    const a = randomItem(gameState.phenomenaList);
+    const b = randomItem(gameState.phenomenaList);
+
+    if (a.title === b.title) continue;
+    if (gameState.usedPhenomena.has(a.title)) continue;
+    if (gameState.usedPhenomena.has(b.title)) continue;
+
+    const diff = Math.abs(a.year - b.year);
+
+    if (diff < 1) continue;
+    if (diff > limit) continue;
+
+    return [a, b];
+  }
+}
+
+function generateRound() {
+  const [phenA, phenB] = pickPhenomenaPair();
+
+  gameState.usedPhenomena.add(phenA.title);
+  gameState.usedPhenomena.add(phenB.title);
+
+  const sentenceA = randomItem(phenA.sentences);
+  const sentenceB = randomItem(phenB.sentences);
+
+  let option1 = {
+    sentence: sentenceA,
+    year: phenA.year,
+    title: phenA.title
+  };
+
+  let option2 = {
+    sentence: sentenceB,
+    year: phenB.year,
+    title: phenB.title
+  };
+
+  if (Math.random() < 0.5) {
+    [option1, option2] = [option2, option1];
+  }
+
+  const correctIndex = option1.year < option2.year ? 0 : 1;
+
+  return {
+    options: [option1, option2],
+    correctIndex
+  };
+}
+
+function fillCard(card, data) {
+  const text = card.querySelector(".fact-text");
+  const btn = card.querySelector(".answer-btn");
+  const meta = card.querySelector(".fact-meta");
+  const title = card.querySelector(".fact-title");
+  const year = card.querySelector(".fact-year");
+
+  text.textContent = data.sentence;
+  title.textContent = data.title;
+  year.textContent = data.year;
+
+  btn.style.display = "block";
+  btn.disabled = false;
+  meta.classList.add("hidden");
+  card.style.background = "white";
+}
+
+function showRound() {
+  const round = generateRound();
+  gameState.currentRound = round;
+  gameState.isRoundResolved = false;
+
+  const cardA = elements.cards[0];
+  const cardB = elements.cards[1];
+
+  fillCard(cardA, round.options[0]);
+  fillCard(cardB, round.options[1]);
+
+  setStatus("Выберите, что произошло раньше");
+}
+
+function updateLevelAfterAnswer(isCorrect) {
+  if (isCorrect) {
+    if (gameState.currentLevel === MAX_LEVEL) {
+      return "win";
+    }
+
+    gameState.currentLevel += 1;
+    renderLevels();
+    return "continue";
+  }
+
+  if (gameState.currentLevel === 1) {
+    return "lose";
+  }
+
+  gameState.currentLevel -= 1;
+  renderLevels();
+  return "continue";
+}
+
+function resolveRound(selectedIndex) {
+  if (gameState.isRoundResolved || !gameState.currentRound) {
+    return;
+  }
+
+  gameState.isRoundResolved = true;
+
+  const isCorrect = selectedIndex === gameState.currentRound.correctIndex;
+  const color = isCorrect ? "#dcfce7" : "#fee2e2";
+
+  elements.cards.forEach(card => {
+    const btn = card.querySelector(".answer-btn");
+    const meta = card.querySelector(".fact-meta");
+
+    btn.style.display = "none";
+    meta.classList.remove("hidden");
+    card.style.background = color;
+  });
+
+  const outcome = updateLevelAfterAnswer(isCorrect);
+
+  if (outcome === "win") {
+    elements.nextBtn.classList.add("hidden");
+    setStatus("Победа!");
+    showRestartOnly();
+    return;
+  }
+
+  if (outcome === "lose") {
+    elements.nextBtn.classList.add("hidden");
+    setStatus("Проигрыш");
+    showRestartOnly();
+    return;
+  }
+
+  showNextButton();
+  setStatus(isCorrect ? "Правильно" : "Неправильно");
+}
+
+function showNextButton() {
+  elements.nextBtn.classList.remove("hidden");
+}
+
+function showRestartOnly() {
+  elements.nextBtn.classList.add("hidden");
+
+  elements.cards.forEach(card => {
+    const btn = card.querySelector(".answer-btn");
+    btn.style.display = "none";
+  });
+}
+
+function nextRound() {
+  elements.nextBtn.classList.add("hidden");
+  showRound();
+}
+
+elements.cards.forEach((card, index) => {
+  const btn = card.querySelector(".answer-btn");
+
+  btn.addEventListener("click", () => {
+    resolveRound(index);
+  });
+});
+
+elements.restartBtn.addEventListener("click", () => {
+  if (!gameState.loaded) return;
+  resetGame();
+});
+
+elements.nextBtn.addEventListener("click", () => {
+  nextRound();
+});
+
+async function init() {
+  try {
+    renderLevels();
+    setStatus("Загрузка данных...");
+
+    await loadData();
+
+    elements.gameArea.classList.remove("hidden");
+    resetGame();
+  } catch (err) {
+    console.error(err);
+    setStatus("Ошибка загрузки данных");
+  }
+}
+
+init();
+
+</script>
+
+</body>
+</html>
